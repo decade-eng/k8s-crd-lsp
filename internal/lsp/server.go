@@ -184,7 +184,10 @@ func (s *Server) textDocumentCompletion(_ *glsp.Context, params *protocol.Comple
 			result[i].Detail = &detail
 		}
 	}
-	return result, nil
+	return protocol.CompletionList{
+		IsIncomplete: false,
+		Items:        result,
+	}, nil
 }
 
 func (s *Server) publishDiagnosticsForURI(notify func(string, any), uri string) {
