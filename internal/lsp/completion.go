@@ -64,7 +64,7 @@ func propertyNameCompletions(doc *myyaml.Document, path []string, reg *schema.Re
 
 	info := reg.PropertiesAtPath(kind, av, path)
 	if info == nil {
-		return nil
+		return rootCompletions()
 	}
 
 	items := make([]CompletionItem, 0, len(info.Properties))

@@ -1,6 +1,8 @@
 package yaml
 
 import (
+	"strings"
+
 	goyaml "gopkg.in/yaml.v3"
 )
 
@@ -91,7 +93,7 @@ func CompletionContext(doc *Document, line, col int) CompletionCtx {
 
 	node := NodeAtPosition(doc.Root, line, col, doc.LineOffset)
 	if node == nil {
-		return CompletionCtx{Type: CtxPropertyName}
+		return indentBasedContext(doc, line, col)
 	}
 
 	path := PathToNode(doc.Root, node)
@@ -106,7 +108,10 @@ func CompletionContext(doc *Document, line, col int) CompletionCtx {
 		}
 		return CompletionCtx{Type: CtxPropertyName}
 
-	case goyaml.MappingNode, goyaml.DocumentNode:
+	case goyaml.DocumentNode:
+		return indentBasedContext(doc, line, col)
+
+	case goyaml.MappingNode:
 		return CompletionCtx{Type: CtxPropertyName, Path: path}
 
 	case goyaml.SequenceNode:
@@ -114,6 +119,50 @@ func CompletionContext(doc *Document, line, col int) CompletionCtx {
 	}
 
 	return CompletionCtx{Type: CtxPropertyName, Path: path}
+}
+
+func indentBasedContext(doc *Document, line, col int) CompletionCtx {
+	if doc.Text == "" {
+		return CompletionCtx{Type: CtxPropertyName}
+	}
+	lines := strings.Split(doc.Text, "\n")
+	if line < 0 || line >= len(lines) {
+		return CompletionCtx{Type: CtxPropertyName}
+	}
+
+	currentIndent := countIndent(lines[line])
+	if strings.TrimSpace(lines[line]) == "" {
+		currentIndent = col
+	}
+
+	var path []string
+	targetIndent := currentIndent
+	for i := line - 1; i >= doc.LineOffset; i-- {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "-") {
+			continue
+		}
+		lineIndent := countIndent(lines[i])
+		if lineIndent < targetIndent && (strings.HasSuffix(trimmed, ":") || strings.Contains(trimmed, ": ")) {
+			key := strings.TrimSpace(strings.SplitN(trimmed, ":", 2)[0])
+			path = append([]string{key}, path...)
+			targetIndent = lineIndent
+			if lineIndent == 0 {
+				break
+			}
+		}
+	}
+
+	return CompletionCtx{Type: CtxPropertyName, Path: path}
+}
+
+func countIndent(line string) int {
+	for i, c := range line {
+		if c != ' ' && c != '\t' {
+			return i
+		}
+	}
+	return len(line)
 }
 
 func isValueNode(root, target *goyaml.Node) bool {

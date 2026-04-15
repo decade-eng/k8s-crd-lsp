@@ -12,6 +12,7 @@ type Document struct {
 	LineOffset int
 	Kind       string
 	APIVersion string
+	Text       string
 }
 
 func ParseFile(content string) []*Document {
@@ -31,7 +32,7 @@ func ParseFile(content string) []*Document {
 			break
 		}
 
-		doc := &Document{Root: &node}
+		doc := &Document{Root: &node, Text: content}
 
 		if node.Kind == goyaml.DocumentNode {
 			doc.LineOffset = node.Line - 1 // 1-based to 0-based
