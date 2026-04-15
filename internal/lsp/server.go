@@ -163,6 +163,12 @@ func (s *Server) loadDiscovery() {
 		return
 	}
 	for _, uri := range store.URIs() {
+		docs := store.Get(uri)
+		for _, doc := range docs {
+			if doc.APIVersion != "" {
+				s.ensureSchemaLoaded(doc.APIVersion, notifyFn, uri)
+			}
+		}
 		s.publishDiagnosticsForURI(notifyFn, uri)
 	}
 }
