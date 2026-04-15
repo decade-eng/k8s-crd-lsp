@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"strings"
 	"sync"
 
 	jrpc "github.com/sourcegraph/jsonrpc2"
@@ -25,14 +26,20 @@ type Server struct {
 	schemaLoadErr error
 	notifyFn      func(method string, params any)
 
+	discovery     *schema.DiscoveryResult
+	loadedGroups  map[string]bool
+	loadingGroups map[string]bool
+
 	handler *protocol.Handler
 }
 
 func NewServer(kubectlPath string) *Server {
 	s := &Server{
-		kubectl:  kubectl.New(kubectlPath),
-		registry: schema.NewRegistry(),
-		store:    myyaml.NewStore(),
+		kubectl:       kubectl.New(kubectlPath),
+		registry:      schema.NewRegistry(),
+		store:         myyaml.NewStore(),
+		loadedGroups:  make(map[string]bool),
+		loadingGroups: make(map[string]bool),
 	}
 	s.handler = &protocol.Handler{
 		Initialize:             s.initialize,
@@ -107,7 +114,7 @@ func (s *Server) initialize(ctx *glsp.Context, _ *protocol.InitializeParams) (an
 	s.notifyFn = ctx.Notify
 	s.mu.Unlock()
 
-	go s.loadSchemas()
+	go s.loadDiscovery()
 
 	trueVal := true
 	syncKind := protocol.TextDocumentSyncKindFull
@@ -131,9 +138,46 @@ func (s *Server) shutdown(_ *glsp.Context) error {
 	return nil
 }
 
+func (s *Server) loadDiscovery() {
+	discovery, err := schema.FetchDiscovery(s.kubectl)
+
+	s.mu.Lock()
+	if err != nil {
+		s.schemaLoadErr = err
+		notifyFn := s.notifyFn
+		store := s.store
+		s.mu.Unlock()
+		if notifyFn != nil {
+			for _, uri := range store.URIs() {
+				s.publishDiagnosticsForURI(notifyFn, uri)
+			}
+		}
+		return
+	}
+	s.discovery = discovery
+	notifyFn := s.notifyFn
+	store := s.store
+	s.mu.Unlock()
+
+	if notifyFn == nil {
+		return
+	}
+	for _, uri := range store.URIs() {
+		s.publishDiagnosticsForURI(notifyFn, uri)
+	}
+}
+
 func (s *Server) textDocumentDidOpen(ctx *glsp.Context, params *protocol.DidOpenTextDocumentParams) error {
 	uri := string(params.TextDocument.URI)
 	s.store.Update(uri, params.TextDocument.Text)
+
+	docs := s.store.Get(uri)
+	for _, doc := range docs {
+		if doc.APIVersion != "" {
+			s.ensureSchemaLoaded(doc.APIVersion, ctx.Notify, uri)
+		}
+	}
+
 	s.publishDiagnosticsForURI(ctx.Notify, uri)
 	return nil
 }
@@ -145,6 +189,14 @@ func (s *Server) textDocumentDidChange(ctx *glsp.Context, params *protocol.DidCh
 			s.store.Update(uri, whole.Text)
 		}
 	}
+
+	docs := s.store.Get(uri)
+	for _, doc := range docs {
+		if doc.APIVersion != "" {
+			s.ensureSchemaLoaded(doc.APIVersion, ctx.Notify, uri)
+		}
+	}
+
 	s.publishDiagnosticsForURI(ctx.Notify, uri)
 	return nil
 }
@@ -190,12 +242,78 @@ func (s *Server) textDocumentCompletion(_ *glsp.Context, params *protocol.Comple
 	}, nil
 }
 
+func (s *Server) ensureSchemaLoaded(apiVersion string, notify func(string, any), uri string) {
+	groupPath := apiVersionToGroupPath(apiVersion)
+
+	s.mu.Lock()
+	if s.loadedGroups[groupPath] || s.loadingGroups[groupPath] || s.discovery == nil {
+		s.mu.Unlock()
+		return
+	}
+	serverRelativeURL, ok := s.discovery.Paths[groupPath]
+	if !ok {
+		s.mu.Unlock()
+		return
+	}
+	s.loadingGroups[groupPath] = true
+	s.mu.Unlock()
+
+	go func() {
+		s.publishDiagnosticsForURI(notify, uri)
+
+		raw, err := schema.FetchAPIGroupSchema(s.kubectl, serverRelativeURL)
+		if err != nil {
+			s.mu.Lock()
+			delete(s.loadingGroups, groupPath)
+			s.mu.Unlock()
+			s.publishDiagnosticsForURI(notify, uri)
+			return
+		}
+
+		schemas, err := schema.ParseAPIGroupSchemas(raw, groupPath)
+		if err != nil {
+			s.mu.Lock()
+			delete(s.loadingGroups, groupPath)
+			s.mu.Unlock()
+			s.publishDiagnosticsForURI(notify, uri)
+			return
+		}
+
+		s.mu.Lock()
+		s.registry.Load(schemas) //nolint
+		s.loadedGroups[groupPath] = true
+		delete(s.loadingGroups, groupPath)
+		notifyFn := s.notifyFn
+		store := s.store
+		s.mu.Unlock()
+
+		if notifyFn == nil {
+			return
+		}
+		for _, u := range store.URIs() {
+			s.publishDiagnosticsForURI(notifyFn, u)
+		}
+	}()
+}
+
+func apiVersionToGroupPath(apiVersion string) string {
+	parts := strings.SplitN(apiVersion, "/", 2)
+	if len(parts) == 1 {
+		return "api/" + parts[0]
+	}
+	return "apis/" + parts[0] + "/" + parts[1]
+}
+
 func (s *Server) publishDiagnosticsForURI(notify func(string, any), uri string) {
 	docs := s.store.Get(uri)
 
 	s.mu.Lock()
 	reg := s.registry
 	schemaLoadErr := s.schemaLoadErr
+	loadingGroups := make(map[string]bool, len(s.loadingGroups))
+	for k, v := range s.loadingGroups {
+		loadingGroups[k] = v
+	}
 	s.mu.Unlock()
 
 	var lspDiags []protocol.Diagnostic
@@ -210,39 +328,26 @@ func (s *Server) publishDiagnosticsForURI(notify func(string, any), uri string) 
 			Source:   strPtr("k8s-crd-lsp"),
 		})
 	} else {
-		diags := ValidateAll(docs, reg)
-		lspDiags = convertDiagnostics(diags)
+		for _, doc := range docs {
+			if doc.APIVersion != "" && loadingGroups[apiVersionToGroupPath(doc.APIVersion)] {
+				sev := protocol.DiagnosticSeverity(SeverityInfo)
+				lspDiags = append(lspDiags, protocol.Diagnostic{
+					Range:    zeroRange(),
+					Severity: &sev,
+					Message:  "Loading K8s schemas for " + doc.APIVersion + "...",
+					Source:   strPtr("k8s-crd-lsp"),
+				})
+				continue
+			}
+			diags := ValidateDoc(doc, reg)
+			lspDiags = append(lspDiags, convertDiagnostics(diags)...)
+		}
 	}
 
 	notify("textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
 		URI:         protocol.DocumentUri(uri),
 		Diagnostics: lspDiags,
 	})
-}
-
-func (s *Server) loadSchemas() {
-	schemas, err := schema.FetchAllSchemas(s.kubectl)
-
-	s.mu.Lock()
-	if err != nil {
-		s.schemaLoadErr = err
-		s.mu.Unlock()
-		return
-	}
-
-	s.registry.Load(schemas) //nolint
-	s.schemasReady = true
-	notifyFn := s.notifyFn
-	store := s.store
-	s.mu.Unlock()
-
-	// Revalidate all open documents
-	if notifyFn == nil {
-		return
-	}
-	for _, uri := range store.URIs() {
-		s.publishDiagnosticsForURI(notifyFn, uri)
-	}
 }
 
 func convertDiagnostics(diags []Diagnostic) []protocol.Diagnostic {
