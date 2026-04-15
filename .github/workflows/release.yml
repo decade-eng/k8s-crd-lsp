@@ -1,0 +1,38 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-and-release:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build all platforms
+        run: |
+          mkdir -p dist
+          for GOOS in darwin linux; do
+            for GOARCH in arm64 amd64; do
+              BINARY_NAME="k8s-crd-lsp"
+              ASSET_NAME="k8s-crd-lsp-${GOOS}-${GOARCH}.tar.gz"
+              GOOS=$GOOS GOARCH=$GOARCH go build -o "dist/${BINARY_NAME}" ./cmd/k8s-crd-lsp
+              tar -czf "dist/${ASSET_NAME}" -C dist "${BINARY_NAME}"
+              rm "dist/${BINARY_NAME}"
+            done
+          done
+          ls -la dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
