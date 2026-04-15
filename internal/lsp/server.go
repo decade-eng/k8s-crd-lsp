@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"io"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -139,10 +140,12 @@ func (s *Server) shutdown(_ *glsp.Context) error {
 }
 
 func (s *Server) loadDiscovery() {
+	log.Println("[k8s-crd-lsp] loadDiscovery: fetching...")
 	discovery, err := schema.FetchDiscovery(s.kubectl)
 
 	s.mu.Lock()
 	if err != nil {
+		log.Printf("[k8s-crd-lsp] loadDiscovery: error: %v", err)
 		s.schemaLoadErr = err
 		notifyFn := s.notifyFn
 		store := s.store
@@ -159,13 +162,19 @@ func (s *Server) loadDiscovery() {
 	store := s.store
 	s.mu.Unlock()
 
+	log.Printf("[k8s-crd-lsp] loadDiscovery: OK, %d paths", len(discovery.Paths))
 	if notifyFn == nil {
+		log.Println("[k8s-crd-lsp] loadDiscovery: no notifyFn, skipping")
 		return
 	}
-	for _, uri := range store.URIs() {
+	uris := store.URIs()
+	log.Printf("[k8s-crd-lsp] loadDiscovery: %d open URIs", len(uris))
+	for _, uri := range uris {
 		docs := store.Get(uri)
+		log.Printf("[k8s-crd-lsp] loadDiscovery: uri=%s docs=%d", uri, len(docs))
 		for _, doc := range docs {
 			if doc.APIVersion != "" {
+				log.Printf("[k8s-crd-lsp] loadDiscovery: triggering load for %s/%s", doc.Kind, doc.APIVersion)
 				s.ensureSchemaLoaded(doc.APIVersion, notifyFn, uri)
 			}
 		}
@@ -253,11 +262,14 @@ func (s *Server) ensureSchemaLoaded(apiVersion string, notify func(string, any),
 
 	s.mu.Lock()
 	if s.loadedGroups[groupPath] || s.loadingGroups[groupPath] || s.discovery == nil {
+		log.Printf("[k8s-crd-lsp] ensureSchema: skip %s (loaded=%v loading=%v discovery=%v)",
+			groupPath, s.loadedGroups[groupPath], s.loadingGroups[groupPath], s.discovery != nil)
 		s.mu.Unlock()
 		return
 	}
 	serverRelativeURL, ok := s.discovery.Paths[groupPath]
 	if !ok {
+		log.Printf("[k8s-crd-lsp] ensureSchema: %s not in discovery paths", groupPath)
 		s.mu.Unlock()
 		return
 	}
@@ -265,10 +277,12 @@ func (s *Server) ensureSchemaLoaded(apiVersion string, notify func(string, any),
 	s.mu.Unlock()
 
 	go func() {
+		log.Printf("[k8s-crd-lsp] ensureSchema: fetching %s ...", groupPath)
 		s.publishDiagnosticsForURI(notify, uri)
 
 		raw, err := schema.FetchAPIGroupSchema(s.kubectl, serverRelativeURL)
 		if err != nil {
+			log.Printf("[k8s-crd-lsp] ensureSchema: fetch error %s: %v", groupPath, err)
 			s.mu.Lock()
 			delete(s.loadingGroups, groupPath)
 			s.mu.Unlock()
@@ -278,6 +292,7 @@ func (s *Server) ensureSchemaLoaded(apiVersion string, notify func(string, any),
 
 		schemas, err := schema.ParseAPIGroupSchemas(raw, groupPath)
 		if err != nil {
+			log.Printf("[k8s-crd-lsp] ensureSchema: parse error %s: %v", groupPath, err)
 			s.mu.Lock()
 			delete(s.loadingGroups, groupPath)
 			s.mu.Unlock()
@@ -292,6 +307,10 @@ func (s *Server) ensureSchemaLoaded(apiVersion string, notify func(string, any),
 		notifyFn := s.notifyFn
 		store := s.store
 		s.mu.Unlock()
+
+		log.Printf("[k8s-crd-lsp] ensureSchema: loaded %s (%d schemas)", groupPath, len(schemas))
+		// Verify the lookup works
+		log.Printf("[k8s-crd-lsp] ensureSchema: allKinds=%v", s.registry.AllKinds())
 
 		if notifyFn == nil {
 			return
@@ -316,6 +335,7 @@ func (s *Server) publishDiagnosticsForURI(notify func(string, any), uri string) 
 	s.mu.Lock()
 	reg := s.registry
 	schemaLoadErr := s.schemaLoadErr
+	discoveryReady := s.discovery != nil
 	loadingGroups := make(map[string]bool, len(s.loadingGroups))
 	for k, v := range s.loadingGroups {
 		loadingGroups[k] = v
@@ -325,12 +345,20 @@ func (s *Server) publishDiagnosticsForURI(notify func(string, any), uri string) 
 	lspDiags := make([]protocol.Diagnostic, 0)
 
 	if schemaLoadErr != nil {
-		msg := "k8s-crd-lsp: unable to load schemas: " + schemaLoadErr.Error()
+		msg := "k8s-crd-lsp: " + schemaLoadErr.Error()
 		sev := protocol.DiagnosticSeverity(SeverityWarning)
 		lspDiags = append(lspDiags, protocol.Diagnostic{
 			Range:    zeroRange(),
 			Severity: &sev,
 			Message:  msg,
+			Source:   strPtr("k8s-crd-lsp"),
+		})
+	} else if !discoveryReady {
+		sev := protocol.DiagnosticSeverity(SeverityInfo)
+		lspDiags = append(lspDiags, protocol.Diagnostic{
+			Range:    zeroRange(),
+			Severity: &sev,
+			Message:  "Connecting to K8s cluster...",
 			Source:   strPtr("k8s-crd-lsp"),
 		})
 	} else {
