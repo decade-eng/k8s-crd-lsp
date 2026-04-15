@@ -1,0 +1,11 @@
+# Go
+k8s-crd-lsp
+/k8s-crd-lsp-*
+
+# Rust / Zed extension
+zed-extension/target/
+zed-extension/Cargo.lock
+
+# Evidence and local
+.sisyphus/evidence/
+/tmp/
