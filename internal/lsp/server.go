@@ -322,7 +322,7 @@ func (s *Server) publishDiagnosticsForURI(notify func(string, any), uri string) 
 	}
 	s.mu.Unlock()
 
-	var lspDiags []protocol.Diagnostic
+	lspDiags := make([]protocol.Diagnostic, 0)
 
 	if schemaLoadErr != nil {
 		msg := "k8s-crd-lsp: unable to load schemas: " + schemaLoadErr.Error()
