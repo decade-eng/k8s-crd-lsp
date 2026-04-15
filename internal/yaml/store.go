@@ -31,3 +31,13 @@ func (s *Store) Remove(uri string) {
 	defer s.mu.Unlock()
 	delete(s.docs, uri)
 }
+
+func (s *Store) URIs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	uris := make([]string, 0, len(s.docs))
+	for uri := range s.docs {
+		uris = append(uris, uri)
+	}
+	return uris
+}
