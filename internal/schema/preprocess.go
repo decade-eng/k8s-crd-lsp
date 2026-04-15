@@ -129,6 +129,38 @@ func processSchema(schema map[string]interface{}) map[string]interface{} {
 		result["properties"] = newProps
 	}
 
+	if required, ok := result["required"].([]interface{}); ok && len(required) > 0 {
+		if props, ok := result["properties"].(map[string]interface{}); ok {
+			filtered := make([]interface{}, 0, len(required))
+			for _, r := range required {
+				name, ok := r.(string)
+				if !ok {
+					filtered = append(filtered, r)
+					continue
+				}
+				prop, exists := props[name]
+				if !exists {
+					filtered = append(filtered, r)
+					continue
+				}
+				propMap, ok := prop.(map[string]interface{})
+				if !ok {
+					filtered = append(filtered, r)
+					continue
+				}
+				if _, hasDefault := propMap["default"]; hasDefault {
+					continue
+				}
+				filtered = append(filtered, r)
+			}
+			if len(filtered) > 0 {
+				result["required"] = filtered
+			} else {
+				delete(result, "required")
+			}
+		}
+	}
+
 	if items, ok := result["items"].(map[string]interface{}); ok {
 		result["items"] = processSchema(items)
 	}

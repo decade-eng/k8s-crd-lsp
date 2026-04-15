@@ -98,7 +98,30 @@ func ValidateDoc(doc *myyaml.Document, reg *schema.Registry) []Diagnostic {
 		}}
 	}
 
-	return collectDiagnostics(ve, doc)
+	diags := collectDiagnostics(ve, doc)
+	if isCRD(av) {
+		for i := range diags {
+			if diags[i].Severity == SeverityError {
+				diags[i].Severity = SeverityWarning
+			}
+		}
+	}
+	return diags
+}
+
+func isCRD(apiVersion string) bool {
+	parts := strings.SplitN(apiVersion, "/", 2)
+	if len(parts) == 1 {
+		return false
+	}
+	group := parts[0]
+	if !strings.Contains(group, ".") {
+		return false
+	}
+	if strings.HasSuffix(group, ".k8s.io") {
+		return false
+	}
+	return true
 }
 
 func collectDiagnostics(ve *jsonschema.ValidationError, doc *myyaml.Document) []Diagnostic {
