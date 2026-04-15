@@ -56,11 +56,42 @@ func Preprocess(raw []byte) ([]byte, error) {
 func processSchema(schema map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{}, len(schema))
 
+	preserveUnknown := false
+	intOrString := false
+
 	for k, v := range schema {
-		if strings.HasPrefix(k, "x-kubernetes-") && k != "x-kubernetes-group-version-kind" {
+		switch k {
+		case "x-kubernetes-preserve-unknown-fields":
+			if b, ok := v.(bool); ok && b {
+				preserveUnknown = true
+			}
 			continue
+		case "x-kubernetes-int-or-string":
+			if b, ok := v.(bool); ok && b {
+				intOrString = true
+			}
+			continue
+		case "x-kubernetes-group-version-kind":
+			result[k] = v
+		default:
+			if strings.HasPrefix(k, "x-kubernetes-") {
+				continue
+			}
+			result[k] = v
 		}
-		result[k] = v
+	}
+
+	if preserveUnknown {
+		delete(result, "type")
+		delete(result, "properties")
+		delete(result, "required")
+		delete(result, "additionalProperties")
+	}
+
+	if intOrString {
+		delete(result, "allOf")
+		delete(result, "anyOf")
+		result["type"] = []interface{}{"integer", "string"}
 	}
 
 	// Convert nullable:true to type array with "null"
