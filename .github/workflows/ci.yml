@@ -36,14 +36,3 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: go build -o /dev/null ./cmd/k8s-crd-lsp
 
-  extension:
-    name: Zed extension (WASM)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-wasip2
-      - name: Build WASM
-        working-directory: zed-extension
-        run: cargo build --target wasm32-wasip2
