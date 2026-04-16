@@ -124,11 +124,8 @@ metadata:
 	}
 
 	diags := lsp.ValidateDoc(docs[0], reg)
-	if len(diags) == 0 {
-		t.Fatal("expected diagnostic for missing kind")
-	}
-	if diags[0].Severity != lsp.SeverityWarning {
-		t.Errorf("expected Warning severity, got %d", diags[0].Severity)
+	if len(diags) != 0 {
+		t.Errorf("expected no diagnostics for doc missing kind (not a K8s resource), got %d", len(diags))
 	}
 }
 

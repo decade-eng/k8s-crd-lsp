@@ -43,27 +43,8 @@ func ValidateDoc(doc *myyaml.Document, reg *schema.Registry) []Diagnostic {
 	kind := doc.Kind
 	av := doc.APIVersion
 
-	if kind == "" && av == "" {
+	if kind == "" || av == "" {
 		return nil
-	}
-
-	if kind == "" {
-		return []Diagnostic{{
-			StartLine: doc.LineOffset, StartCol: 0,
-			EndLine: doc.LineOffset, EndCol: 0,
-			Severity: SeverityWarning,
-			Message:  "missing 'kind' field",
-			Source:   "k8s-crd-lsp",
-		}}
-	}
-	if av == "" {
-		return []Diagnostic{{
-			StartLine: doc.LineOffset, StartCol: 0,
-			EndLine: doc.LineOffset, EndCol: 0,
-			Severity: SeverityWarning,
-			Message:  "missing 'apiVersion' field",
-			Source:   "k8s-crd-lsp",
-		}}
 	}
 
 	s := reg.Lookup(kind, av)
