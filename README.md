@@ -73,3 +73,7 @@ vim.lsp.start({
 - `kubectl` on `PATH` (or passed via `--kubectl-path`)
 - A valid `kubeconfig` pointing at a reachable cluster
 - Kubernetes 1.27+ (OpenAPI v3 endpoint required)
+
+## Credits
+
+Inspired by [nvim-k8s-crd](https://github.com/anasinnyk/nvim-k8s-crd) by [@anasinnyk](https://github.com/anasinnyk), which provides the same functionality for Neovim via yaml-language-server. This project reimplements the concept as a standalone LSP server.
