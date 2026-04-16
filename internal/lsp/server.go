@@ -187,6 +187,9 @@ func (s *Server) textDocumentDidOpen(ctx *glsp.Context, params *protocol.DidOpen
 	s.store.Update(uri, params.TextDocument.Text)
 
 	docs := s.store.Get(uri)
+	if !myyaml.IsK8sFile(docs) {
+		return nil
+	}
 	for _, doc := range docs {
 		if doc.APIVersion != "" {
 			s.ensureSchemaLoaded(doc.APIVersion, ctx.Notify, uri)
@@ -206,6 +209,9 @@ func (s *Server) textDocumentDidChange(ctx *glsp.Context, params *protocol.DidCh
 	}
 
 	docs := s.store.Get(uri)
+	if !myyaml.IsK8sFile(docs) {
+		return nil
+	}
 	for _, doc := range docs {
 		if doc.APIVersion != "" {
 			s.ensureSchemaLoaded(doc.APIVersion, ctx.Notify, uri)
@@ -228,6 +234,9 @@ func (s *Server) textDocumentCompletion(_ *glsp.Context, params *protocol.Comple
 	col := int(params.Position.Character)
 
 	docs := s.store.Get(uri)
+	if !myyaml.IsK8sFile(docs) {
+		return protocol.CompletionList{Items: make([]protocol.CompletionItem, 0)}, nil
+	}
 	doc := myyaml.DocumentAtPosition(docs, line)
 
 	s.mu.Lock()

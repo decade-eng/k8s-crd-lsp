@@ -7,6 +7,15 @@ import (
 	goyaml "gopkg.in/yaml.v3"
 )
 
+func IsK8sFile(docs []*Document) bool {
+	for _, d := range docs {
+		if d.Kind != "" && d.APIVersion != "" {
+			return true
+		}
+	}
+	return false
+}
+
 type Document struct {
 	Root       *goyaml.Node
 	LineOffset int
