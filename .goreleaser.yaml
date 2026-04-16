@@ -1,0 +1,46 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: k8s-crd-lsp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+    goarch:
+      - arm64
+      - amd64
+    dir: .
+    main: ./cmd/k8s-crd-lsp
+    binary: k8s-crd-lsp
+    ldflags:
+      - -s -w
+
+archives:
+  - id: k8s-crd-lsp
+    name_template: "k8s-crd-lsp-{{ .Os }}-{{ .Arch }}"
+    formats:
+      - tar.gz
+    files:
+      - none*
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  name_template: "{{.Tag}}"
